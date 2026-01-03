@@ -68,6 +68,30 @@ export class UsersService {
     return { message: "User deleted successfully" };
   }
 
+  /**
+   * Create a new user
+   */
+  async create(userDto: {
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    role?: string;
+  }): Promise<User> {
+    const user = new this.userModel(userDto);
+    return user.save();
+  }
+
+  /**
+   * Find a user by email (without password)
+   */
+  async findByEmail(email: string): Promise<User | null> {
+    return this.userModel.findOne({ email }).lean().exec();
+  }
+
+  /**
+   * Find a user by email (with password) – for AuthService
+   */
   async findByEmailWithPassword(email: string) {
     return this.userModel.findOne({ email }).select("+password").exec();
   }
