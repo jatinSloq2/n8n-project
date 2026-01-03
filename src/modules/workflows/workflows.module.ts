@@ -1,19 +1,17 @@
-const { Module } = require('@nestjs/common');
-const { MongooseModule } = require('@nestjs/mongoose');
-const { WorkflowsService } = require('./workflows.service');
-const { WorkflowsController } = require('./workflows.controller');
-const { WorkflowSchema } = require('./workflow.schema');
-const { ExecutionsModule } = require('../executions/executions.module');
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { WorkflowsService } from './workflows.service';
+import { WorkflowsController } from './workflows.controller';
+import { Workflow, WorkflowSchema } from './workflow.schema';
+import { ExecutionsModule } from '../executions/executions.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: 'Workflow', schema: WorkflowSchema }]),
+    MongooseModule.forFeature([{ name: Workflow.name, schema: WorkflowSchema }]),
     ExecutionsModule,
   ],
   controllers: [WorkflowsController],
   providers: [WorkflowsService],
   exports: [WorkflowsService],
 })
-class WorkflowsModule {}
-
-module.exports = { WorkflowsModule };
+export class WorkflowsModule {}

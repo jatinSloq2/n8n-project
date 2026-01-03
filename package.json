@@ -4,9 +4,9 @@
   "description": "N8N-like workflow automation platform backend",
   "main": "src/main.ts",
   "scripts": {
-    "start": "node dist/main.ts",
-    "dev": "nodemon --watch src -e ts --exec ts-node src/main.ts",
+    "dev": "npx nodemon --watch src -e ts --exec ts-node src/main.ts",
     "build": "tsc",
+    "start": "node dist/main.js",
     "test": "jest"
   },
   "dependencies": {

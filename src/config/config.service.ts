@@ -1,29 +1,27 @@
-const { Injectable } = require('@nestjs/common');
+import { Injectable } from '@nestjs/common';
 
 @Injectable()
-class ConfigService {
-  get(key) {
+export class ConfigService {
+  get(key: string): string | undefined {
     return process.env[key];
   }
 
-  getNumber(key, defaultValue = 0) {
+  getNumber(key: string, defaultValue = 0): number {
     const value = process.env[key];
     return value ? parseInt(value, 10) : defaultValue;
   }
 
-  getBoolean(key, defaultValue = false) {
+  getBoolean(key: string, defaultValue = false): boolean {
     const value = process.env[key];
     if (!value) return defaultValue;
     return value.toLowerCase() === 'true';
   }
 
-  isDevelopment() {
+  isDevelopment(): boolean {
     return process.env.NODE_ENV === 'development';
   }
 
-  isProduction() {
+  isProduction(): boolean {
     return process.env.NODE_ENV === 'production';
   }
 }
-
-module.exports = { ConfigService };

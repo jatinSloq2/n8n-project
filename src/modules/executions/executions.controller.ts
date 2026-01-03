@@ -1,43 +1,39 @@
-const { Controller, Get, Post, Delete, Param, Query, UseGuards, Request } = require('@nestjs/common');
-const { ExecutionsService } = require('./executions.service');
-const { JwtAuthGuard } = require('../auth/guards/jwt-auth.guard');
+import { Controller, Get, Post, Delete, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { ExecutionsService } from './executions.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('executions')
 @UseGuards(JwtAuthGuard)
-class ExecutionsController {
-  constructor(executionsService) {
-    this.executionsService = executionsService;
-  }
+export class ExecutionsController {
+  constructor(private readonly executionsService: ExecutionsService) {}
 
   @Get()
-  async findAll(@Request() req, @Query() filters) {
+  findAll(@Request() req: any, @Query() filters: any) {
     return this.executionsService.findAll(req.user.userId, filters);
   }
 
   @Get('stats')
-  async getStats(@Request() req) {
+  getStats(@Request() req: any) {
     return this.executionsService.getExecutionStats(req.user.userId);
   }
 
   @Get('workflow/:workflowId')
-  async findByWorkflow(@Param('workflowId') workflowId, @Request() req) {
+  findByWorkflow(@Param('workflowId') workflowId: string, @Request() req: any) {
     return this.executionsService.findByWorkflowId(workflowId, req.user.userId);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id) {
+  findOne(@Param('id') id: string) {
     return this.executionsService.findById(id);
   }
 
   @Post(':id/stop')
-  async stop(@Param('id') id) {
+  stop(@Param('id') id: string) {
     return this.executionsService.stopExecution(id);
   }
 
   @Delete(':id')
-  async delete(@Param('id') id) {
+  delete(@Param('id') id: string) {
     return this.executionsService.delete(id);
   }
 }
-
-module.exports = { ExecutionsController };

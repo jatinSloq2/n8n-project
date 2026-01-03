@@ -1,9 +1,12 @@
-require('dotenv').config();
-const { NestFactory } = require('@nestjs/core');
-const { ValidationPipe } = require('@nestjs/common');
-const helmet = require('helmet');
-const compression = require('compression');
-const AppModule = require('./app.module');
+import 'reflect-metadata';
+import 'dotenv/config';
+
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+import compression from 'compression';
+
+import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -24,7 +27,7 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-    })
+    }),
   );
 
   // Global prefix
@@ -33,12 +36,12 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  console.log(`🚀 Backend server running on http://localhost:${port}`);
-  console.log(`📚 API available at http://localhost:${port}/api`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV}`);
+  console.log(`Backend server running on http://localhost:${port}`);
+  console.log(`API available at http://localhost:${port}/api`);
+  console.log(`Environment: ${process.env.NODE_ENV}`);
 }
 
 bootstrap().catch((err) => {
-  console.error('❌ Error starting server:', err);
+  console.error('Error starting server:', err);
   process.exit(1);
 });

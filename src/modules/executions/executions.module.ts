@@ -1,20 +1,21 @@
-const { Module, forwardRef } = require('@nestjs/common');
-const { MongooseModule } = require('@nestjs/mongoose');
-const { BullModule } = require('@nestjs/bull');
-const { ExecutionsService } = require('./executions.service');
-const { ExecutionsController } = require('./executions.controller');
-const { ExecutionSchema } = require('./execution.schema');
-const { WorkflowExecutor } = require('./workflow-executor.service');
-const { ExecutionProcessor } = require('./execution.processor');
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { BullModule } from '@nestjs/bull';
+
+import { ExecutionsService } from './executions.service';
+import { ExecutionsController } from './executions.controller';
+import { ExecutionSchema, Execution } from './execution.schema';
+import { WorkflowExecutor } from './workflow-executor.service';
+import { ExecutionProcessor } from './execution.processor';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: 'Execution', schema: ExecutionSchema }]),
+    MongooseModule.forFeature([{ name: Execution.name, schema: ExecutionSchema }]),
     BullModule.registerQueue({
       name: 'executions',
       redis: {
         host: process.env.REDIS_HOST || 'localhost',
-        port: process.env.REDIS_PORT || 6379,
+        port: Number(process.env.REDIS_PORT) || 6379,
       },
     }),
   ],
@@ -22,6 +23,4 @@ const { ExecutionProcessor } = require('./execution.processor');
   providers: [ExecutionsService, WorkflowExecutor, ExecutionProcessor],
   exports: [ExecutionsService, WorkflowExecutor],
 })
-class ExecutionsModule {}
-
-module.exports = { ExecutionsModule };
+export class ExecutionsModule {}

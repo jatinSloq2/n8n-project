@@ -1,11 +1,9 @@
-const { Controller, Get, Param } = require('@nestjs/common');
-const { NodesService } = require('./nodes.service');
+import { Controller, Get, Param } from '@nestjs/common';
+import { NodesService } from './nodes.service';
 
 @Controller('nodes')
-class NodesController {
-  constructor(nodesService) {
-    this.nodesService = nodesService;
-  }
+export class NodesController {
+  constructor(private readonly nodesService: NodesService) {}
 
   @Get()
   getAllNodes() {
@@ -18,14 +16,12 @@ class NodesController {
   }
 
   @Get('category/:category')
-  getNodesByCategory(@Param('category') category) {
+  getNodesByCategory(@Param('category') category: string) {
     return this.nodesService.getNodesByCategory(category);
   }
 
   @Get(':id')
-  getNodeById(@Param('id') id) {
+  getNodeById(@Param('id') id: string) {
     return this.nodesService.getNodeById(id);
   }
 }
-
-module.exports = { NodesController };

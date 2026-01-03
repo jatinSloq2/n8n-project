@@ -1,20 +1,17 @@
-const { Module } = require('@nestjs/common');
-const { MongooseModule } = require('@nestjs/mongoose');
-const { ConfigModule } = require('./config/config.module');
-const { AuthModule } = require('./modules/auth/auth.module');
-const { UsersModule } = require('./modules/users/users.module');
-const { WorkflowsModule } = require('./modules/workflows/workflows.module');
-const { NodesModule } = require('./modules/nodes/nodes.module');
-const { ExecutionsModule } = require('./modules/executions/executions.module');
-const { CredentialsModule } = require('./modules/credentials/credentials.module');
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { ConfigModule } from './config/config.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
+import { WorkflowsModule } from './modules/workflows/workflows.module';
+import { NodesModule } from './modules/nodes/nodes.module';
+import { ExecutionsModule } from './modules/executions/executions.module';
+import { CredentialsModule } from './modules/credentials/credentials.module';
 
 @Module({
   imports: [
     ConfigModule,
-    MongooseModule.forRoot(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    }),
+    MongooseModule.forRoot(process.env.MONGODB_URI),
     AuthModule,
     UsersModule,
     WorkflowsModule,
@@ -23,6 +20,4 @@ const { CredentialsModule } = require('./modules/credentials/credentials.module'
     CredentialsModule,
   ],
 })
-class AppModule {}
-
-module.exports = AppModule;
+export class AppModule {}

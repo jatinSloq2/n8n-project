@@ -1,58 +1,42 @@
-const { Schema } = require('@nestjs/mongoose');
-const mongoose = require('mongoose');
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+export type UserDocument = User & Document;
 
 @Schema({ timestamps: true })
-class User {
-  email;
-  password;
-  firstName;
-  lastName;
-  isActive;
-  role;
-  createdAt;
-  updatedAt;
-}
-
-const UserSchema = new mongoose.Schema({
-  email: {
-    type: String,
+export class User {
+  @Prop({
     required: true,
     unique: true,
     lowercase: true,
     trim: true,
-  },
-  password: {
-    type: String,
-    required: true,
-  },
-  firstName: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  lastName: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  isActive: {
-    type: Boolean,
-    default: true,
-  },
-  role: {
-    type: String,
+  })
+  email: string;
+
+  @Prop({ required: true })
+  password: string;
+
+  @Prop({ required: true, trim: true })
+  firstName: string;
+
+  @Prop({ required: true, trim: true })
+  lastName: string;
+
+  @Prop({ default: true })
+  isActive: boolean;
+
+  @Prop({
     enum: ['user', 'admin'],
     default: 'user',
-  },
-}, {
-  timestamps: true,
-});
+  })
+  role: 'user' | 'admin';
+}
+
+export const UserSchema = SchemaFactory.createForClass(User);
 
 // Remove password from JSON responses
-UserSchema.methods.toJSON = function() {
+UserSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
   return obj;
 };
-
-module.exports = { User, UserSchema };

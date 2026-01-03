@@ -1,12 +1,10 @@
-const { Module } = require('@nestjs/common');
-const { NodesService } = require('./nodes.service');
-const { NodesController } = require('./nodes.controller');
+import { Module } from '@nestjs/common';
+import { NodesService } from './nodes.service';
+import { NodesController } from './nodes.controller';
 
 @Module({
   controllers: [NodesController],
   providers: [NodesService],
   exports: [NodesService],
 })
-class NodesModule {}
-
-module.exports = { NodesModule };
+export class NodesModule {}
