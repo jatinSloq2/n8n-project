@@ -1,42 +1,28 @@
-const { Schema } = require('@nestjs/mongoose');
-const mongoose = require('mongoose');
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document, Types } from 'mongoose';
+
+export type CredentialDocument = Credential & Document;
 
 @Schema({ timestamps: true })
-class Credential {
-  name;
-  type;
-  data;
-  userId;
-  createdAt;
-  updatedAt;
-}
+export class Credential {
+  @Prop({ required: true, trim: true })
+  name: string;
 
-const CredentialSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  type: {
-    type: String,
+  @Prop({
     required: true,
     enum: ['http', 'oauth2', 'apiKey', 'database', 'email'],
-  },
-  data: {
-    type: mongoose.Schema.Types.Mixed,
-    required: true,
-  },
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-}, {
-  timestamps: true,
-});
+  })
+  type: 'http' | 'oauth2' | 'apiKey' | 'database' | 'email';
+
+  @Prop({ type: Object, required: true })
+  data: Record<string, any>;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  userId: Types.ObjectId;
+}
+
+export const CredentialSchema = SchemaFactory.createForClass(Credential);
 
 // Indexes
 CredentialSchema.index({ userId: 1 });
 CredentialSchema.index({ type: 1 });
-
-module.exports = { Credential, CredentialSchema };

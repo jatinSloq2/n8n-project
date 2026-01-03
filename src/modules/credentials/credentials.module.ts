@@ -1,17 +1,17 @@
-const { Module } = require('@nestjs/common');
-const { MongooseModule } = require('@nestjs/mongoose');
-const { CredentialsService } = require('./credentials.service');
-const { CredentialsController } = require('./credentials.controller');
-const { CredentialSchema } = require('./credential.schema');
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { CredentialsService } from './credentials.service';
+import { CredentialsController } from './credentials.controller';
+import { Credential, CredentialSchema } from './credential.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: 'Credential', schema: CredentialSchema }]),
+    MongooseModule.forFeature([
+      { name: Credential.name, schema: CredentialSchema },
+    ]),
   ],
   controllers: [CredentialsController],
   providers: [CredentialsService],
   exports: [CredentialsService],
 })
-class CredentialsModule {}
-
-module.exports = { CredentialsModule };
+export class CredentialsModule {}

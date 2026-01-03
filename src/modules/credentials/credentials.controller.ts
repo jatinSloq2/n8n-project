@@ -1,38 +1,57 @@
-const { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } = require('@nestjs/common');
-const { CredentialsService } = require('./credentials.service');
-const { JwtAuthGuard } = require('../auth/guards/jwt-auth.guard');
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import { CredentialsService } from './credentials.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('credentials')
 @UseGuards(JwtAuthGuard)
-class CredentialsController {
-  constructor(credentialsService) {
-    this.credentialsService = credentialsService;
-  }
+export class CredentialsController {
+  constructor(
+    private readonly credentialsService: CredentialsService,
+  ) {}
 
   @Post()
-  async create(@Body() createCredentialDto, @Request() req) {
-    return this.credentialsService.create(createCredentialDto, req.user.userId);
+  async create(@Body() createCredentialDto: any, @Request() req: any) {
+    return this.credentialsService.create(
+      createCredentialDto,
+      req.user.userId,
+    );
   }
 
   @Get()
-  async findAll(@Request() req) {
+  async findAll(@Request() req: any) {
     return this.credentialsService.findAll(req.user.userId);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id, @Request() req) {
+  async findOne(@Param('id') id: string, @Request() req: any) {
     return this.credentialsService.findById(id, req.user.userId);
   }
 
   @Put(':id')
-  async update(@Param('id') id, @Body() updateCredentialDto, @Request() req) {
-    return this.credentialsService.update(id, updateCredentialDto, req.user.userId);
+  async update(
+    @Param('id') id: string,
+    @Body() updateCredentialDto: any,
+    @Request() req: any,
+  ) {
+    return this.credentialsService.update(
+      id,
+      updateCredentialDto,
+      req.user.userId,
+    );
   }
 
   @Delete(':id')
-  async delete(@Param('id') id, @Request() req) {
+  async delete(@Param('id') id: string, @Request() req: any) {
     return this.credentialsService.delete(id, req.user.userId);
   }
 }
-
-module.exports = { CredentialsController };
