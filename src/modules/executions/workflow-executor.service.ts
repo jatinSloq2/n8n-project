@@ -83,47 +83,165 @@ export class WorkflowExecutor {
   }
 
   async executeNode(node: any, context: ExecutionContext) {
-    if (context.visited.has(node.id)) return;
-    context.visited.add(node.id);
+    if (context.visited.has(node.id)) {
+      this.logger.debug(`Node ${node.id} already visited, skipping`);
+      return context.nodeOutputs[node.id];
+    }
 
+    context.visited.add(node.id);
     const start = Date.now();
-    const nodeInput = this.getNodeInput(node, context);
 
     this.logger.log(`Executing node: ${node.id} (${node.type})`);
 
     let output: NodeOutput = { data: {} };
+    let error: Error | null = null;
 
     try {
+      // Get input from previous nodes
+      const nodeInput = this.getNodeInput(node, context);
+
+      // Log input for debugging
+      this.logger.debug(`Node ${node.id} input:`, JSON.stringify(nodeInput));
+
+      // Execute the node
       output = await this.executeNodeByType(node, nodeInput, context);
-    } catch (error) {
-      this.logger.error(`Node ${node.id} failed: ${error.message}`);
-      throw new Error(
-        `Node ${node.id} (${node.type}) failed: ${error.message}`
-      );
+
+      // Log output for debugging
+      this.logger.debug(`Node ${node.id} output:`, JSON.stringify(output));
+    } catch (err) {
+      error = err;
+      this.logger.error(`Node ${node.id} failed: ${err.message}`, err.stack);
+
+      // Store error in output
+      output = {
+        data: {},
+        metadata: {
+          error: true,
+          errorMessage: err.message,
+          errorStack: err.stack,
+        },
+      };
+
+      throw new Error(`Node ${node.id} (${node.type}) failed: ${err.message}`);
+    } finally {
+      const end = Date.now();
+
+      // Store node output and execution data
+      context.nodeOutputs[node.id] = output;
+      context.runData[node.id] = {
+        startTime: start,
+        executionTime: end - start,
+        data: output,
+        nodeType: node.type,
+        error: error
+          ? {
+              message: error.message,
+              stack: error.stack,
+            }
+          : null,
+      };
     }
 
-    const end = Date.now();
+    // Handle conditional branching (IF node)
+    if (node.type === "if" && output.metadata?.branch) {
+      const branch = output.metadata.branch; // 'true' or 'false'
+      const connectedNodes = this.getConnectedNodesByOutput(
+        node.id,
+        branch,
+        context.workflow.connections,
+        context.workflow.nodes
+      );
 
-    context.nodeOutputs[node.id] = output;
-    context.runData[node.id] = {
-      startTime: start,
-      executionTime: end - start,
-      data: output,
-      nodeType: node.type,
-    };
+      for (const next of connectedNodes) {
+        await this.executeNode(next, context);
+      }
+    } else {
+      // Normal flow - execute all connected nodes
+      const connectedNodes = this.getConnectedNodes(
+        node.id,
+        context.workflow.connections,
+        context.workflow.nodes
+      );
 
-    // Handle multiple outputs (like IF, Switch, Loop)
-    const connectedNodes = this.getConnectedNodes(
-      node.id,
-      context.workflow.connections,
-      context.workflow.nodes
-    );
-
-    for (const next of connectedNodes) {
-      await this.executeNode(next, context);
+      for (const next of connectedNodes) {
+        await this.executeNode(next, context);
+      }
     }
 
     return output;
+  }
+
+  // Add this helper for conditional branching
+  private getConnectedNodesByOutput(
+    nodeId: string,
+    outputHandle: string,
+    connections: any[],
+    nodes: any[]
+  ) {
+    return connections
+      .filter((c) => c.source === nodeId && c.sourceHandle === outputHandle)
+      .map((c) => nodes.find((n) => n.id === c.target))
+      .filter(Boolean);
+  }
+
+  private resolveExpressions(value: any, context: ExecutionContext): any {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    // Match patterns like {{$node.NodeName.data.field}}
+    const expressionPattern = /\{\{([^}]+)\}\}/g;
+
+    return value.replace(expressionPattern, (match, expression) => {
+      const trimmed = expression.trim();
+
+      // Handle $node references
+      if (trimmed.startsWith("$node.")) {
+        const parts = trimmed.split(".");
+        // parts = ['$node', 'nodeId', 'data', 'field']
+
+        if (parts.length < 3) return match;
+
+        const nodeId = parts[1];
+        const path = parts.slice(2); // ['data', 'field']
+
+        const nodeOutput = context.nodeOutputs[nodeId];
+        if (!nodeOutput) {
+          this.logger.warn(`Node ${nodeId} not found in outputs`);
+          return match;
+        }
+
+        // Navigate the path
+        let result = nodeOutput;
+        for (const key of path) {
+          if (result && typeof result === "object" && key in result) {
+            result = result[key];
+          } else {
+            return match;
+          }
+        }
+
+        return result;
+      }
+
+      // Handle $input references (workflow input)
+      if (trimmed.startsWith("$input.")) {
+        const path = trimmed.substring(7).split(".");
+        let result = context.inputData;
+
+        for (const key of path) {
+          if (result && typeof result === "object" && key in result) {
+            result = result[key];
+          } else {
+            return match;
+          }
+        }
+
+        return result;
+      }
+
+      return match;
+    });
   }
 
   private async executeNodeByType(
@@ -131,7 +249,11 @@ export class WorkflowExecutor {
     nodeInput: any,
     context: ExecutionContext
   ): Promise<NodeOutput> {
-    const config = node.data?.config || {};
+    // Resolve all expressions in config
+    const config = this.resolveConfigExpressions(
+      node.data?.config || {},
+      context
+    );
 
     switch (node.type) {
       // ============= TRIGGERS =============
@@ -218,6 +340,28 @@ export class WorkflowExecutor {
         this.logger.warn(`Unknown node type: ${node.type}`);
         return { data: nodeInput };
     }
+  }
+  private resolveConfigExpressions(
+    config: any,
+    context: ExecutionContext
+  ): any {
+    if (typeof config === "string") {
+      return this.resolveExpressions(config, context);
+    }
+
+    if (Array.isArray(config)) {
+      return config.map((item) => this.resolveConfigExpressions(item, context));
+    }
+
+    if (typeof config === "object" && config !== null) {
+      const resolved: any = {};
+      for (const [key, value] of Object.entries(config)) {
+        resolved[key] = this.resolveConfigExpressions(value, context);
+      }
+      return resolved;
+    }
+
+    return config;
   }
 
   // ============= TRIGGER IMPLEMENTATIONS =============
@@ -775,15 +919,49 @@ export class WorkflowExecutor {
       (c: any) => c.target === node.id
     );
 
+    // If no incoming connections, use workflow input data
     if (!incoming.length) {
-      return context.inputData;
+      return context.inputData || {};
     }
 
+    // Get outputs from all connected source nodes
     const inputs = incoming
-      .map((c: any) => context.nodeOutputs[c.source]?.data)
+      .map((c: any) => {
+        const sourceOutput = context.nodeOutputs[c.source];
+        if (!sourceOutput) {
+          this.logger.warn(`No output found for source node: ${c.source}`);
+          return null;
+        }
+        return sourceOutput.data;
+      })
       .filter(Boolean);
 
-    return inputs.length === 1 ? inputs[0] : inputs;
+    // If single input, return it directly (not as array)
+    if (inputs.length === 1) {
+      return inputs[0];
+    }
+
+    // If multiple inputs, merge them intelligently
+    if (inputs.length > 1) {
+      // Check if all inputs are arrays
+      const allArrays = inputs.every((input) => Array.isArray(input));
+      if (allArrays) {
+        return inputs.flat(); // Flatten arrays
+      }
+
+      // Check if all inputs are objects
+      const allObjects = inputs.every(
+        (input) => typeof input === "object" && !Array.isArray(input)
+      );
+      if (allObjects) {
+        return Object.assign({}, ...inputs); // Merge objects
+      }
+
+      // Otherwise return as array
+      return inputs;
+    }
+
+    return {};
   }
 
   private getConnectedNodes(nodeId: string, connections: any[], nodes: any[]) {
