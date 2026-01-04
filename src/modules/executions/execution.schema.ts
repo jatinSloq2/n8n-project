@@ -1,3 +1,4 @@
+// execution.schema.ts
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { HydratedDocument, Types, Schema as MongooseSchema } from "mongoose";
 
@@ -20,11 +21,19 @@ export class Execution {
   })
   status: ExecutionStatus;
 
-  // ✅ FIX: Explicit MongoDB type
-  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
-  data: Record<string, any>;
+  // ✅ FIX: Properly typed data field
+  @Prop({ 
+    type: MongooseSchema.Types.Mixed, 
+    default: () => ({ resultData: { runData: {}, nodeOutputs: {} } })
+  })
+  data: {
+    resultData?: {
+      runData: Record<string, any>;
+      nodeOutputs?: Record<string, any>; // ✅ Add this
+    };
+    error?: string;
+  };
 
-  // ✅ Optional but recommended
   @Prop({
     type: {
       message: String,
@@ -45,6 +54,10 @@ export class Execution {
 
   @Prop()
   finishedAt?: Date;
+
+  // Add these for timestamps
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export const ExecutionSchema = SchemaFactory.createForClass(Execution);

@@ -41,17 +41,18 @@ export class WorkflowExecutor {
     const execution = await this.executionModel.findById(executionId);
     if (!execution) throw new Error("Execution not found");
 
+    // ✅ Declare context outside try-catch so it's accessible in catch block
+    const context: ExecutionContext = {
+      workflow,
+      runData: {},
+      nodeOutputs: {},
+      inputData,
+      visited: new Set<string>(),
+    };
+
     try {
       execution.status = "running";
       await execution.save();
-
-      const context: ExecutionContext = {
-        workflow,
-        runData: {},
-        nodeOutputs: {},
-        inputData,
-        visited: new Set<string>(),
-      };
 
       const startNode = this.findStartNode(
         workflow.nodes,
@@ -61,17 +62,63 @@ export class WorkflowExecutor {
 
       await this.executeNode(startNode, context);
 
+      // ✅ SUCCESS: Save execution data
       execution.status = "success";
       execution.finishedAt = new Date();
-      execution.data.resultData = { runData: context.runData };
+
+      // Initialize data object if it doesn't exist
+      if (!execution.data) {
+        execution.data = {
+          resultData: {
+            runData: {},
+            nodeOutputs: {},
+          },
+        };
+      }
+
+      // Set the result data
+      execution.data.resultData = {
+        runData: context.runData,
+        nodeOutputs: context.nodeOutputs, // ✅ Now properly typed
+      };
+
+      // ✅ CRITICAL: Mark the Mixed field as modified
+      execution.markModified("data");
+
       await execution.save();
+
+      this.logger.log(`✅ Execution ${executionId} completed successfully`);
+      this.logger.debug(
+        `Final runData:`,
+        JSON.stringify(context.runData, null, 2)
+      );
 
       return { success: true, executionId, data: context.runData };
     } catch (error) {
-      this.logger.error(`Execution failed: ${error.message}`, error.stack);
+      this.logger.error(`❌ Execution failed: ${error.message}`, error.stack);
+
       execution.status = "error";
       execution.finishedAt = new Date();
+
+      // Initialize data if needed
+      if (!execution.data) {
+        execution.data = {
+          resultData: {
+            runData: {},
+            nodeOutputs: {},
+          },
+        };
+      }
+
       execution.data.error = error.message;
+      execution.data.resultData = {
+        runData: context.runData, // ✅ Now context is accessible
+        nodeOutputs: context.nodeOutputs,
+      };
+
+      // ✅ Mark as modified
+      execution.markModified("data");
+
       await execution.save();
       throw error;
     }
@@ -91,7 +138,7 @@ export class WorkflowExecutor {
     context.visited.add(node.id);
     const start = Date.now();
 
-    this.logger.log(`Executing node: ${node.id} (${node.type})`);
+    this.logger.log(`🔵 Executing node: ${node.id} (${node.type})`);
 
     let output: NodeOutput = { data: {} };
     let error: Error | null = null;
@@ -100,19 +147,24 @@ export class WorkflowExecutor {
       // Get input from previous nodes
       const nodeInput = this.getNodeInput(node, context);
 
-      // Log input for debugging
-      this.logger.debug(`Node ${node.id} input:`, JSON.stringify(nodeInput));
+      // ✅ Better logging
+      this.logger.log(
+        `📥 Node ${node.id} INPUT:`,
+        JSON.stringify(nodeInput, null, 2)
+      );
 
       // Execute the node
       output = await this.executeNodeByType(node, nodeInput, context);
 
-      // Log output for debugging
-      this.logger.debug(`Node ${node.id} output:`, JSON.stringify(output));
+      // ✅ Better logging
+      this.logger.log(
+        `📤 Node ${node.id} OUTPUT:`,
+        JSON.stringify(output, null, 2)
+      );
     } catch (err) {
       error = err;
-      this.logger.error(`Node ${node.id} failed: ${err.message}`, err.stack);
+      this.logger.error(`❌ Node ${node.id} failed: ${err.message}`, err.stack);
 
-      // Store error in output
       output = {
         data: {},
         metadata: {
@@ -140,11 +192,19 @@ export class WorkflowExecutor {
             }
           : null,
       };
+
+      // ✅ Log what's stored
+      this.logger.log(
+        `💾 Stored data for node ${node.id}:`,
+        JSON.stringify(context.runData[node.id], null, 2)
+      );
     }
 
     // Handle conditional branching (IF node)
     if (node.type === "if" && output.metadata?.branch) {
-      const branch = output.metadata.branch; // 'true' or 'false'
+      const branch = output.metadata.branch;
+      this.logger.log(`🔀 IF node branching to: ${branch}`);
+
       const connectedNodes = this.getConnectedNodesByOutput(
         node.id,
         branch,
@@ -161,6 +221,10 @@ export class WorkflowExecutor {
         node.id,
         context.workflow.connections,
         context.workflow.nodes
+      );
+
+      this.logger.log(
+        `➡️ Node ${node.id} connected to ${connectedNodes.length} nodes`
       );
 
       for (const next of connectedNodes) {

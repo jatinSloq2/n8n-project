@@ -27,6 +27,26 @@ export class ExecutionsController {
     return this.executionsService.getExecutionStats(req.user.userId);
   }
 
+  @Get(":id/details")
+  async getExecutionDetails(@Param("id") id: string) {
+    const execution = await this.executionsService.findById(id);
+
+    return {
+      // id: execution._id,
+      id: id,
+      workflowId: execution.workflowId,
+      status: execution.status,
+      startedAt: execution.startedAt,
+      finishedAt: execution.finishedAt,
+      duration:
+        execution.finishedAt && execution.startedAt
+          ? execution.finishedAt.getTime() - execution.startedAt.getTime()
+          : null,
+      data: execution.data,
+      error: execution.error,
+    };
+  }
+
   @Get("workflow/:workflowId")
   findByWorkflow(@Param("workflowId") workflowId: string, @Request() req: any) {
     return this.executionsService.findByWorkflowId(workflowId, req.user.userId);
