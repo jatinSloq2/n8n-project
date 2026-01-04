@@ -1,14 +1,14 @@
+import { BullModule } from "@nestjs/bull";
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
-import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
 
-import { ExecutionsService } from "./executions.service";
-import { ExecutionsController } from "./executions.controller";
-import { ExecutionSchema, Execution } from "./execution.schema";
-import { WorkflowExecutor } from "./workflow-executor.service";
+import { WorkflowsModule } from "../workflows/workflows.module";
 import { ExecutionProcessor } from "./execution.processor";
-import { WorkflowsModule } from "../workflows/workflows.module"; // ✅ ADD
+import { Execution, ExecutionSchema } from "./execution.schema";
+import { ExecutionsController } from "./executions.controller";
+import { ExecutionsService } from "./executions.service";
+import { WorkflowExecutor } from "./workflow-executor.service";
 import { WorkflowScheduler } from "./workflow-scheduler.service";
 
 @Module({
@@ -18,13 +18,9 @@ import { WorkflowScheduler } from "./workflow-scheduler.service";
     ]),
     BullModule.registerQueue({
       name: "executions",
-      redis: {
-        host: process.env.REDIS_HOST || "localhost",
-        port: Number(process.env.REDIS_PORT) || 6379,
-      },
     }),
-    ScheduleModule.forRoot(), // Add this
-    WorkflowsModule, // ✅ REQUIRED
+    ScheduleModule.forRoot(),
+    WorkflowsModule,
   ],
   controllers: [ExecutionsController],
   providers: [
@@ -33,6 +29,11 @@ import { WorkflowScheduler } from "./workflow-scheduler.service";
     ExecutionProcessor,
     WorkflowScheduler,
   ],
-  exports: [ExecutionsService, WorkflowExecutor, WorkflowScheduler],
+  exports: [
+    MongooseModule,
+    ExecutionsService,
+    WorkflowExecutor,
+    WorkflowScheduler,
+  ],
 })
 export class ExecutionsModule {}

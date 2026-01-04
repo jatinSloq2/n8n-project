@@ -4,7 +4,6 @@ import { Model } from "mongoose";
 import axios, { AxiosRequestConfig } from "axios";
 import * as nodemailer from "nodemailer";
 import * as fs from "fs/promises";
-import * as path from "path";
 import { VM } from "vm2";
 
 import { Execution, ExecutionDocument } from "./execution.schema";
@@ -41,7 +40,6 @@ export class WorkflowExecutor {
     const execution = await this.executionModel.findById(executionId);
     if (!execution) throw new Error("Execution not found");
 
-    // ✅ Declare context outside try-catch so it's accessible in catch block
     const context: ExecutionContext = {
       workflow,
       runData: {},
@@ -52,6 +50,7 @@ export class WorkflowExecutor {
 
     try {
       execution.status = "running";
+      execution.startedAt = new Date();
       await execution.save();
 
       const startNode = this.findStartNode(
@@ -62,11 +61,9 @@ export class WorkflowExecutor {
 
       await this.executeNode(startNode, context);
 
-      // ✅ SUCCESS: Save execution data
       execution.status = "success";
       execution.finishedAt = new Date();
 
-      // Initialize data object if it doesn't exist
       if (!execution.data) {
         execution.data = {
           resultData: {
@@ -76,23 +73,15 @@ export class WorkflowExecutor {
         };
       }
 
-      // Set the result data
       execution.data.resultData = {
         runData: context.runData,
-        nodeOutputs: context.nodeOutputs, // ✅ Now properly typed
+        nodeOutputs: context.nodeOutputs,
       };
 
-      // ✅ CRITICAL: Mark the Mixed field as modified
       execution.markModified("data");
-
       await execution.save();
 
       this.logger.log(`✅ Execution ${executionId} completed successfully`);
-      this.logger.debug(
-        `Final runData:`,
-        JSON.stringify(context.runData, null, 2)
-      );
-
       return { success: true, executionId, data: context.runData };
     } catch (error) {
       this.logger.error(`❌ Execution failed: ${error.message}`, error.stack);
@@ -100,7 +89,6 @@ export class WorkflowExecutor {
       execution.status = "error";
       execution.finishedAt = new Date();
 
-      // Initialize data if needed
       if (!execution.data) {
         execution.data = {
           resultData: {
@@ -112,13 +100,11 @@ export class WorkflowExecutor {
 
       execution.data.error = error.message;
       execution.data.resultData = {
-        runData: context.runData, // ✅ Now context is accessible
+        runData: context.runData,
         nodeOutputs: context.nodeOutputs,
       };
 
-      // ✅ Mark as modified
       execution.markModified("data");
-
       await execution.save();
       throw error;
     }
@@ -144,19 +130,15 @@ export class WorkflowExecutor {
     let error: Error | null = null;
 
     try {
-      // Get input from previous nodes
       const nodeInput = this.getNodeInput(node, context);
 
-      // ✅ Better logging
       this.logger.log(
         `📥 Node ${node.id} INPUT:`,
         JSON.stringify(nodeInput, null, 2)
       );
 
-      // Execute the node
       output = await this.executeNodeByType(node, nodeInput, context);
 
-      // ✅ Better logging
       this.logger.log(
         `📤 Node ${node.id} OUTPUT:`,
         JSON.stringify(output, null, 2)
@@ -178,7 +160,6 @@ export class WorkflowExecutor {
     } finally {
       const end = Date.now();
 
-      // Store node output and execution data
       context.nodeOutputs[node.id] = output;
       context.runData[node.id] = {
         startTime: start,
@@ -192,15 +173,9 @@ export class WorkflowExecutor {
             }
           : null,
       };
-
-      // ✅ Log what's stored
-      this.logger.log(
-        `💾 Stored data for node ${node.id}:`,
-        JSON.stringify(context.runData[node.id], null, 2)
-      );
     }
 
-    // Handle conditional branching (IF node)
+    // Handle conditional branching
     if (node.type === "if" && output.metadata?.branch) {
       const branch = output.metadata.branch;
       this.logger.log(`🔀 IF node branching to: ${branch}`);
@@ -216,15 +191,10 @@ export class WorkflowExecutor {
         await this.executeNode(next, context);
       }
     } else {
-      // Normal flow - execute all connected nodes
       const connectedNodes = this.getConnectedNodes(
         node.id,
         context.workflow.connections,
         context.workflow.nodes
-      );
-
-      this.logger.log(
-        `➡️ Node ${node.id} connected to ${connectedNodes.length} nodes`
       );
 
       for (const next of connectedNodes) {
@@ -235,7 +205,6 @@ export class WorkflowExecutor {
     return output;
   }
 
-  // Add this helper for conditional branching
   private getConnectedNodesByOutput(
     nodeId: string,
     outputHandle: string,
@@ -253,7 +222,6 @@ export class WorkflowExecutor {
       return value;
     }
 
-    // Match patterns like {{$node.NodeName.data.field}}
     const expressionPattern = /\{\{([^}]+)\}\}/g;
 
     return value.replace(expressionPattern, (match, expression) => {
@@ -262,12 +230,10 @@ export class WorkflowExecutor {
       // Handle $node references
       if (trimmed.startsWith("$node.")) {
         const parts = trimmed.split(".");
-        // parts = ['$node', 'nodeId', 'data', 'field']
-
         if (parts.length < 3) return match;
 
         const nodeId = parts[1];
-        const path = parts.slice(2); // ['data', 'field']
+        const path = parts.slice(2);
 
         const nodeOutput = context.nodeOutputs[nodeId];
         if (!nodeOutput) {
@@ -275,7 +241,6 @@ export class WorkflowExecutor {
           return match;
         }
 
-        // Navigate the path
         let result = nodeOutput;
         for (const key of path) {
           if (result && typeof result === "object" && key in result) {
@@ -288,7 +253,7 @@ export class WorkflowExecutor {
         return result;
       }
 
-      // Handle $input references (workflow input)
+      // Handle $input references
       if (trimmed.startsWith("$input.")) {
         const path = trimmed.substring(7).split(".");
         let result = context.inputData;
@@ -304,6 +269,26 @@ export class WorkflowExecutor {
         return result;
       }
 
+      // Handle built-in functions
+      if (trimmed === "$now") {
+        return new Date().toISOString();
+      }
+
+      if (trimmed === "$timestamp") {
+        return Date.now();
+      }
+
+      if (trimmed === "$uuid") {
+        return require("crypto").randomUUID();
+      }
+
+      if (trimmed.startsWith("$random(") && trimmed.endsWith(")")) {
+        const args = trimmed.substring(8, trimmed.length - 1).split(",");
+        const min = parseInt(args[0]) || 0;
+        const max = parseInt(args[1]) || 100;
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
       return match;
     });
   }
@@ -313,7 +298,6 @@ export class WorkflowExecutor {
     nodeInput: any,
     context: ExecutionContext
   ): Promise<NodeOutput> {
-    // Resolve all expressions in config
     const config = this.resolveConfigExpressions(
       node.data?.config || {},
       context
@@ -323,66 +307,64 @@ export class WorkflowExecutor {
       // ============= TRIGGERS =============
       case "trigger":
         return this.executeTrigger(config, nodeInput);
-
       case "webhook":
         return this.executeWebhook(config, nodeInput);
-
       case "schedule":
         return this.executeSchedule(config, nodeInput);
+
+      // ============= AI NODES =============
+      case "aiChat":
+        return await this.executeAIChat(config, nodeInput);
+      case "aiTextGeneration":
+        return await this.executeAITextGeneration(config, nodeInput);
+      case "aiImageAnalysis":
+        return await this.executeAIImageAnalysis(config, nodeInput);
+      case "aiSentiment":
+        return await this.executeAISentiment(config, nodeInput);
 
       // ============= DATA NODES =============
       case "httpRequest":
         return await this.executeHttpRequest(config, nodeInput);
-
       case "database":
         return await this.executeDatabase(config, nodeInput);
+      case "jsonParse":
+        return this.executeJSONParse(config, nodeInput);
+      case "dataMapper":
+        return this.executeDataMapper(config, nodeInput);
+      case "aggregate":
+        return this.executeAggregate(config, nodeInput);
 
       // ============= TRANSFORM NODES =============
       case "code":
         return await this.executeCode(config, nodeInput);
-
       case "set":
         return this.executeSet(config, nodeInput);
-
       case "function":
         return await this.executeFunction(config, nodeInput);
-
-      case "itemLists":
-        return this.executeItemLists(config, nodeInput);
-
       case "filter":
         return this.executeFilter(config, nodeInput);
-
       case "sort":
         return this.executeSort(config, nodeInput);
-
       case "limit":
         return this.executeLimit(config, nodeInput);
 
       // ============= LOGIC NODES =============
       case "if":
         return this.executeIf(config, nodeInput);
-
       case "switch":
         return this.executeSwitch(config, nodeInput);
-
       case "merge":
         return this.executeMerge(config, nodeInput, context);
+      case "loop":
+        return this.executeLoop(config, nodeInput);
 
       // ============= FLOW NODES =============
       case "delay":
         return await this.executeDelay(config, nodeInput);
 
-      case "loop":
-        return this.executeLoop(config, nodeInput);
-
-      case "stopExecution":
-        return this.executeStopExecution(config, nodeInput);
-
       // ============= COMMUNICATION NODES =============
       case "email":
         return await this.executeEmail(config, nodeInput);
-
       case "slack":
         return await this.executeSlack(config, nodeInput);
 
@@ -390,21 +372,12 @@ export class WorkflowExecutor {
       case "readFile":
         return await this.executeReadFile(config, nodeInput);
 
-      case "spreadsheet":
-        return await this.executeSpreadsheet(config, nodeInput);
-
-      // ============= HELPERS =============
-      case "noOp":
-        return { data: nodeInput };
-
-      case "stickyNote":
-        return { data: { note: config.note } };
-
       default:
         this.logger.warn(`Unknown node type: ${node.type}`);
         return { data: nodeInput };
     }
   }
+
   private resolveConfigExpressions(
     config: any,
     context: ExecutionContext
@@ -426,6 +399,397 @@ export class WorkflowExecutor {
     }
 
     return config;
+  }
+
+  // ============= AI NODE IMPLEMENTATIONS =============
+  
+  private async executeAIChat(config: any, input: any): Promise<NodeOutput> {
+    const {
+      provider,
+      model,
+      apiKey,
+      systemPrompt,
+      prompt,
+      temperature,
+      maxTokens,
+    } = config;
+
+    if (!prompt) throw new Error("Prompt is required");
+
+    let response;
+
+    try {
+      if (provider === "openai") {
+        if (!apiKey) throw new Error("API key is required for OpenAI");
+
+        response = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: model || "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt || "You are a helpful assistant.",
+              },
+              { role: "user", content: prompt },
+            ],
+            temperature: temperature || 0.7,
+            max_tokens: maxTokens || 1000,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        return {
+          data: {
+            response: response.data.choices[0].message.content,
+            model: response.data.model,
+            usage: response.data.usage,
+            ...input,
+          },
+        };
+      } else if (provider === "anthropic") {
+        if (!apiKey) throw new Error("API key is required for Anthropic");
+
+        response = await axios.post(
+          "https://api.anthropic.com/v1/messages",
+          {
+            model: model || "claude-3-5-sonnet-20241022",
+            max_tokens: maxTokens || 1000,
+            messages: [{ role: "user", content: prompt }],
+            ...(systemPrompt && { system: systemPrompt }),
+            temperature: temperature || 0.7,
+          },
+          {
+            headers: {
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        return {
+          data: {
+            response: response.data.content[0].text,
+            model: response.data.model,
+            usage: response.data.usage,
+            ...input,
+          },
+        };
+      }
+      // ✅ ADD OLLAMA SUPPORT
+      else if (provider === "ollama") {
+        const ollamaUrl = config.ollamaUrl || "http://localhost:11434";
+
+        response = await axios.post(
+          `${ollamaUrl}/api/generate`,
+          {
+            model: model || "llama3.2",
+            prompt: systemPrompt
+              ? `${systemPrompt}\n\nUser: ${prompt}\n\nAssistant:`
+              : prompt,
+            stream: false,
+            options: {
+              temperature: temperature || 0.7,
+              num_predict: maxTokens || 1000,
+            },
+          },
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        return {
+          data: {
+            response: response.data.response,
+            model: model || "llama3.2",
+            ...input,
+          },
+        };
+      }
+      // ✅ ADD GROQ (FREE API)
+      else if (provider === "groq") {
+        if (!apiKey) throw new Error("API key is required for Groq");
+
+        response = await axios.post(
+          "https://api.groq.com/openai/v1/chat/completions",
+          {
+            model: model || "llama-3.3-70b-versatile",
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt || "You are a helpful assistant.",
+              },
+              { role: "user", content: prompt },
+            ],
+            temperature: temperature || 0.7,
+            max_tokens: maxTokens || 1000,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        return {
+          data: {
+            response: response.data.choices[0].message.content,
+            model: response.data.model,
+            usage: response.data.usage,
+            ...input,
+          },
+        };
+      }
+
+      throw new Error(`Unsupported AI provider: ${provider}`);
+    } catch (error) {
+      if (error.response) {
+        throw new Error(
+          `AI API Error (${error.response.status}): ${
+            error.response.data?.error?.message ||
+            error.response.data?.message ||
+            JSON.stringify(error.response.data)
+          }`
+        );
+      } else if (error.request) {
+        throw new Error(`No response from AI API: ${error.message}`);
+      } else {
+        throw new Error(`AI request setup error: ${error.message}`);
+      }
+    }
+  }
+
+  private async executeAITextGeneration(
+    config: any,
+    input: any
+  ): Promise<NodeOutput> {
+    const { provider, apiKey, contentType, prompt, tone } = config;
+
+    const enhancedPrompt = `Generate ${contentType} content with a ${tone} tone: ${prompt}`;
+
+    return this.executeAIChat(
+      {
+        provider,
+        apiKey,
+        model: provider === "openai" ? "gpt-4" : "claude-3-opus-20240229",
+        prompt: enhancedPrompt,
+        systemPrompt: `You are an expert content writer. Generate high-quality ${contentType} content.`,
+      },
+      input
+    );
+  }
+
+  private async executeAIImageAnalysis(
+    config: any,
+    input: any
+  ): Promise<NodeOutput> {
+    const { provider, apiKey, imageUrl, analysisType, customPrompt } = config;
+
+    if (!imageUrl) throw new Error("Image URL is required");
+
+    const prompts = {
+      describe: "Describe this image in detail.",
+      ocr: "Extract all text from this image.",
+      objects: "List all objects you can see in this image.",
+      custom: customPrompt || "Analyze this image.",
+    };
+
+    if (provider === "openai") {
+      const response = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4-vision-preview",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompts[analysisType] },
+                { type: "image_url", image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+          max_tokens: 1000,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      return {
+        data: {
+          analysis: response.data.choices[0].message.content,
+          imageUrl,
+          analysisType,
+          ...input,
+        },
+      };
+    }
+
+    throw new Error(`Unsupported provider for image analysis: ${provider}`);
+  }
+
+  private async executeAISentiment(
+    config: any,
+    input: any
+  ): Promise<NodeOutput> {
+    const { text, detailedAnalysis } = config;
+
+    if (!text) throw new Error("Text is required for sentiment analysis");
+
+    const positive = [
+      "good",
+      "great",
+      "excellent",
+      "happy",
+      "love",
+      "wonderful",
+    ];
+    const negative = ["bad", "terrible", "awful", "hate", "sad", "poor"];
+
+    const words = text.toLowerCase().split(/\s+/);
+    const positiveCount = words.filter((w) => positive.includes(w)).length;
+    const negativeCount = words.filter((w) => negative.includes(w)).length;
+
+    let sentiment = "neutral";
+    let score = 0;
+
+    if (positiveCount > negativeCount) {
+      sentiment = "positive";
+      score = (positiveCount / words.length) * 100;
+    } else if (negativeCount > positiveCount) {
+      sentiment = "negative";
+      score = -(negativeCount / words.length) * 100;
+    }
+
+    return {
+      data: {
+        text,
+        sentiment,
+        score,
+        confidence: Math.abs(score) > 5 ? "high" : "low",
+        ...(detailedAnalysis && {
+          details: {
+            positiveCount,
+            negativeCount,
+            totalWords: words.length,
+          },
+        }),
+        ...input,
+      },
+    };
+  }
+
+  // ============= DATA NODE IMPLEMENTATIONS =============
+
+  private executeJSONParse(config: any, input: any): NodeOutput {
+    const { operation, jsonPath } = config;
+
+    if (operation === "parse") {
+      const jsonString =
+        typeof input === "string" ? input : JSON.stringify(input);
+      return { data: JSON.parse(jsonString) };
+    }
+
+    if (operation === "stringify") {
+      return { data: JSON.stringify(input, null, 2) };
+    }
+
+    if (operation === "extract" && jsonPath) {
+      const parts = jsonPath.replace(/^\$\./, "").split(".");
+      let result = input;
+      for (const part of parts) {
+        if (result && typeof result === "object") {
+          result = result[part];
+        }
+      }
+      return { data: result };
+    }
+
+    return { data: input };
+  }
+
+  private executeDataMapper(config: any, input: any): NodeOutput {
+    const { mappings, keepUnmapped } = config;
+
+    const items = Array.isArray(input) ? input : [input];
+    const mapped = items.map((item) => {
+      const result: any = keepUnmapped ? { ...item } : {};
+
+      for (const [targetField, sourceField] of Object.entries(mappings)) {
+        if (typeof sourceField === "string") {
+          const parts = sourceField.split(".");
+          let value = item;
+          for (const part of parts) {
+            value = value?.[part];
+          }
+          result[targetField] = value;
+        }
+      }
+
+      return result;
+    });
+
+    return { data: Array.isArray(input) ? mapped : mapped[0] };
+  }
+
+  private executeAggregate(config: any, input: any): NodeOutput {
+    const { operation, field, groupByField } = config;
+
+    const items = Array.isArray(input) ? input : [input];
+
+    if (operation === "sum") {
+      const sum = items.reduce(
+        (acc, item) => acc + (Number(item[field]) || 0),
+        0
+      );
+      return { data: { sum, field } };
+    }
+
+    if (operation === "average") {
+      const sum = items.reduce(
+        (acc, item) => acc + (Number(item[field]) || 0),
+        0
+      );
+      return { data: { average: sum / items.length, field } };
+    }
+
+    if (operation === "count") {
+      return { data: { count: items.length } };
+    }
+
+    if (operation === "min") {
+      const min = Math.min(...items.map((item) => Number(item[field]) || 0));
+      return { data: { min, field } };
+    }
+
+    if (operation === "max") {
+      const max = Math.max(...items.map((item) => Number(item[field]) || 0));
+      return { data: { max, field } };
+    }
+
+    if (operation === "groupBy" && groupByField) {
+      const grouped = items.reduce((acc, item) => {
+        const key = item[groupByField];
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(item);
+        return acc;
+      }, {});
+      return { data: grouped };
+    }
+
+    return { data: input };
   }
 
   // ============= TRIGGER IMPLEMENTATIONS =============
@@ -462,7 +826,7 @@ export class WorkflowExecutor {
     };
   }
 
-  // ============= DATA NODE IMPLEMENTATIONS =============
+  // ============= HTTP REQUEST =============
 
   private async executeHttpRequest(
     config: any,
@@ -475,6 +839,9 @@ export class WorkflowExecutor {
       body,
       timeout = 30000,
       authentication,
+      queryParameters = {},
+      retryOnFail = false,
+      retryCount = 3,
     } = config;
 
     if (!url) throw new Error("URL is required");
@@ -485,8 +852,13 @@ export class WorkflowExecutor {
       throw new Error(`Invalid URL format: ${url}`);
     }
 
+    const urlObj = new URL(url);
+    Object.entries(queryParameters).forEach(([key, value]) => {
+      urlObj.searchParams.append(key, String(value));
+    });
+
     const requestConfig: AxiosRequestConfig = {
-      url,
+      url: urlObj.toString(),
       method,
       headers,
       timeout,
@@ -499,28 +871,47 @@ export class WorkflowExecutor {
         username: config.username,
         password: config.password,
       };
+    } else if (authentication === "bearerToken" && config.token) {
+      requestConfig.headers["Authorization"] = `Bearer ${config.token}`;
     } else if (authentication === "apiKey" && config.apiKey) {
       requestConfig.headers[config.apiKeyHeader || "X-API-Key"] = config.apiKey;
     }
 
-    const response = await axios(requestConfig);
+    // Retry logic
+    let lastError;
+    const maxAttempts = retryOnFail ? retryCount : 1;
 
-    return {
-      data: response.data,
-      metadata: {
-        statusCode: response.status,
-        headers: response.headers,
-      },
-    };
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await axios(requestConfig);
+
+        return {
+          data: response.data,
+          metadata: {
+            statusCode: response.status,
+            headers: response.headers,
+            attempt,
+          },
+        };
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+          this.logger.warn(`Retry attempt ${attempt} for ${url}`);
+        }
+      }
+    }
+
+    throw lastError;
   }
+
+  // ============= DATABASE =============
 
   private async executeDatabase(config: any, input: any): Promise<NodeOutput> {
     const { dbType, operation, query } = config;
 
     if (!query) throw new Error("Query is required");
 
-    // Note: You'll need to implement actual database connections
-    // This is a placeholder that shows the structure
     this.logger.warn(
       "Database execution is a placeholder - implement actual DB logic"
     );
@@ -530,13 +921,13 @@ export class WorkflowExecutor {
         dbType,
         operation,
         query,
-        result: [], // Placeholder for actual results
+        result: [],
         executedAt: new Date(),
       },
     };
   }
 
-  // ============= TRANSFORM NODE IMPLEMENTATIONS =============
+  // ============= CODE & FUNCTION =============
 
   private async executeCode(config: any, input: any): Promise<NodeOutput> {
     const { code, mode = "runOnceForAllItems" } = config;
@@ -554,28 +945,19 @@ export class WorkflowExecutor {
     });
 
     try {
-      const result = vm.run(code);
-      return { data: result };
+      // Wrap the user's code in a function
+      const wrappedCode = `
+      (function() {
+        const items = this.items;
+        ${code}
+      }).call({ items: this.items })
+    `;
+
+      const result = vm.run(wrappedCode);
+      return { data: result !== undefined ? result : input };
     } catch (error) {
       throw new Error(`Code execution failed: ${error.message}`);
     }
-  }
-
-  private executeSet(config: any, input: any): NodeOutput {
-    const { mode = "set", values = {} } = config;
-
-    if (mode === "delete") {
-      const result = { ...input };
-      Object.keys(values).forEach((key) => delete result[key]);
-      return { data: result };
-    }
-
-    return {
-      data: {
-        ...input,
-        ...values,
-      },
-    };
   }
 
   private async executeFunction(config: any, input: any): Promise<NodeOutput> {
@@ -598,21 +980,23 @@ export class WorkflowExecutor {
     }
   }
 
-  private executeItemLists(config: any, input: any): NodeOutput {
-    const { operation } = config;
+  // ============= TRANSFORM NODES =============
 
-    if (operation === "split") {
-      const items = Array.isArray(input) ? input : [input];
-      return { data: items };
+  private executeSet(config: any, input: any): NodeOutput {
+    const { mode = "set", values = {} } = config;
+
+    if (mode === "delete") {
+      const result = { ...input };
+      Object.keys(values).forEach((key) => delete result[key]);
+      return { data: result };
     }
 
-    if (operation === "aggregate") {
-      return {
-        data: Array.isArray(input) ? input : [input],
-      };
-    }
-
-    return { data: input };
+    return {
+      data: {
+        ...input,
+        ...values,
+      },
+    };
   }
 
   private executeFilter(config: any, input: any): NodeOutput {
@@ -671,7 +1055,7 @@ export class WorkflowExecutor {
     return { data: items.slice(0, maxItems) };
   }
 
-  // ============= LOGIC NODE IMPLEMENTATIONS =============
+  // ============= LOGIC NODES =============
 
   private executeIf(config: any, input: any): NodeOutput {
     const { conditions = [], combineOperation = "AND" } = config;
@@ -724,7 +1108,6 @@ export class WorkflowExecutor {
     if (mode === "rules") {
       for (let i = 0; i < rules.length; i++) {
         const rule = rules[i];
-        // Evaluate rule logic here
         if (this.evaluateRule(rule, input)) {
           outputIndex = i;
           break;
@@ -739,8 +1122,7 @@ export class WorkflowExecutor {
   }
 
   private evaluateRule(rule: any, input: any): boolean {
-    // Implement rule evaluation logic
-    return true; // Placeholder
+    return true;
   }
 
   private executeMerge(
@@ -750,7 +1132,6 @@ export class WorkflowExecutor {
   ): NodeOutput {
     const { mode = "append" } = config;
 
-    // Get all inputs from connected nodes
     const allInputs = Object.values(context.nodeOutputs).map((out) => out.data);
 
     switch (mode) {
@@ -758,33 +1139,9 @@ export class WorkflowExecutor {
         return { data: allInputs.flat() };
       case "merge":
         return { data: Object.assign({}, ...allInputs) };
-      case "multiplex":
-        return { data: allInputs };
       default:
         return { data: input };
     }
-  }
-
-  // ============= FLOW NODE IMPLEMENTATIONS =============
-
-  private async executeDelay(config: any, input: any): Promise<NodeOutput> {
-    const { amount = 1, unit = "seconds" } = config;
-
-    const multipliers = {
-      seconds: 1000,
-      minutes: 60000,
-      hours: 3600000,
-      days: 86400000,
-    };
-
-    const delay = amount * (multipliers[unit] || 1000);
-
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    return {
-      data: input,
-      metadata: { delayed: `${amount} ${unit}` },
-    };
   }
 
   private executeLoop(config: any, input: any): NodeOutput {
@@ -801,12 +1158,26 @@ export class WorkflowExecutor {
     };
   }
 
-  private executeStopExecution(config: any, input: any): NodeOutput {
-    const { message = "Execution stopped" } = config;
-    throw new Error(message);
+  private async executeDelay(config: any, input: any): Promise<NodeOutput> {
+    const { amount = 1, unit = "seconds" } = config;
+
+    const multipliers = {
+      seconds: 1000,
+      minutes: 60000,
+      hours: 3600000,
+    };
+
+    const delay = amount * (multipliers[unit] || 1000);
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    return {
+      data: input,
+      metadata: { delayed: `${amount} ${unit}` },
+    };
   }
 
-  // ============= COMMUNICATION NODE IMPLEMENTATIONS =============
+  // ============= COMMUNICATION NODES =============
 
   private async executeEmail(config: any, input: any): Promise<NodeOutput> {
     const {
@@ -819,15 +1190,10 @@ export class WorkflowExecutor {
       smtpPort = 587,
       smtpUser,
       smtpPassword,
-      authentication = "login",
     } = config;
 
     if (!fromEmail || !toEmail || !subject || !body) {
       throw new Error("Email requires from, to, subject, and body");
-    }
-
-    if (authentication === "login" && (!smtpUser || !smtpPassword)) {
-      throw new Error("SMTP authentication requires username and password");
     }
 
     const transportConfig: any = {
@@ -836,7 +1202,7 @@ export class WorkflowExecutor {
       secure: smtpPort === 465,
     };
 
-    if (authentication === "login") {
+    if (smtpUser && smtpPassword) {
       transportConfig.auth = {
         user: smtpUser,
         pass: smtpPassword,
@@ -884,7 +1250,7 @@ export class WorkflowExecutor {
 
     if (authentication === "webhook") {
       if (!webhookUrl) {
-        throw new Error("Webhook URL is required for webhook authentication");
+        throw new Error("Webhook URL is required");
       }
 
       await axios.post(webhookUrl, {
@@ -893,7 +1259,7 @@ export class WorkflowExecutor {
       });
     } else if (authentication === "token") {
       if (!botToken) {
-        throw new Error("Bot token is required for token authentication");
+        throw new Error("Bot token is required");
       }
 
       await axios.post(
@@ -921,19 +1287,20 @@ export class WorkflowExecutor {
     };
   }
 
-  // ============= FILE NODE IMPLEMENTATIONS =============
+  // ============= FILE NODES =============
 
   private async executeReadFile(config: any, input: any): Promise<NodeOutput> {
-    const { operation = "read", filePath } = config;
+    const { operation = "read", filePath, encoding = "utf-8" } = config;
 
     if (!filePath) throw new Error("File path is required");
 
     if (operation === "read") {
-      const content = await fs.readFile(filePath, "utf-8");
+      const content = await fs.readFile(filePath, encoding);
       return {
         data: {
           content,
           filePath,
+          encoding,
           ...input,
         },
       };
@@ -941,7 +1308,7 @@ export class WorkflowExecutor {
 
     if (operation === "write") {
       const contentToWrite = input.content || JSON.stringify(input);
-      await fs.writeFile(filePath, contentToWrite, "utf-8");
+      await fs.writeFile(filePath, contentToWrite, encoding);
       return {
         data: {
           written: true,
@@ -951,29 +1318,19 @@ export class WorkflowExecutor {
       };
     }
 
+    if (operation === "append") {
+      const contentToAppend = input.content || JSON.stringify(input);
+      await fs.appendFile(filePath, contentToAppend, encoding);
+      return {
+        data: {
+          appended: true,
+          filePath,
+          ...input,
+        },
+      };
+    }
+
     return { data: input };
-  }
-
-  private async executeSpreadsheet(
-    config: any,
-    input: any
-  ): Promise<NodeOutput> {
-    const { operation = "read", filePath } = config;
-
-    if (!filePath) throw new Error("File path is required");
-
-    // Note: Implement actual spreadsheet library (xlsx, csv-parser, etc.)
-    this.logger.warn(
-      "Spreadsheet execution is a placeholder - implement actual logic"
-    );
-
-    return {
-      data: {
-        operation,
-        filePath,
-        rows: [], // Placeholder
-      },
-    };
   }
 
   // ============= HELPER METHODS =============
@@ -983,12 +1340,10 @@ export class WorkflowExecutor {
       (c: any) => c.target === node.id
     );
 
-    // If no incoming connections, use workflow input data
     if (!incoming.length) {
       return context.inputData || {};
     }
 
-    // Get outputs from all connected source nodes
     const inputs = incoming
       .map((c: any) => {
         const sourceOutput = context.nodeOutputs[c.source];
@@ -1000,28 +1355,23 @@ export class WorkflowExecutor {
       })
       .filter(Boolean);
 
-    // If single input, return it directly (not as array)
     if (inputs.length === 1) {
       return inputs[0];
     }
 
-    // If multiple inputs, merge them intelligently
     if (inputs.length > 1) {
-      // Check if all inputs are arrays
       const allArrays = inputs.every((input) => Array.isArray(input));
       if (allArrays) {
-        return inputs.flat(); // Flatten arrays
+        return inputs.flat();
       }
 
-      // Check if all inputs are objects
       const allObjects = inputs.every(
         (input) => typeof input === "object" && !Array.isArray(input)
       );
       if (allObjects) {
-        return Object.assign({}, ...inputs); // Merge objects
+        return Object.assign({}, ...inputs);
       }
 
-      // Otherwise return as array
       return inputs;
     }
 
