@@ -662,28 +662,52 @@ export class WorkflowExecutor {
   }
 
   private async executeSlack(config: any, input: any): Promise<NodeOutput> {
-    const { channel, text } = config;
+    const {
+      channel,
+      text,
+      authentication = "webhook",
+      webhookUrl,
+      botToken,
+    } = config;
 
     if (!channel || !text) {
       throw new Error("Slack requires channel and text");
     }
 
-    // Note: Implement Slack webhook integration
-    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (authentication === "webhook") {
+      if (!webhookUrl) {
+        throw new Error("Webhook URL is required for webhook authentication");
+      }
 
-    if (!webhookUrl) {
-      throw new Error("SLACK_WEBHOOK_URL not configured");
+      await axios.post(webhookUrl, {
+        channel,
+        text,
+      });
+    } else if (authentication === "token") {
+      if (!botToken) {
+        throw new Error("Bot token is required for token authentication");
+      }
+
+      await axios.post(
+        "https://slack.com/api/chat.postMessage",
+        {
+          channel,
+          text,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${botToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
     }
-
-    await axios.post(webhookUrl, {
-      channel,
-      text,
-    });
 
     return {
       data: {
         sent: true,
         channel,
+        text,
         ...input,
       },
     };
