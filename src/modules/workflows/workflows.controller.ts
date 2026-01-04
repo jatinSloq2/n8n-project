@@ -12,11 +12,15 @@ import {
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { WorkflowsService } from "./workflows.service";
+import { WorkflowsSeedService } from "./workflows-seed.service";
 
 @Controller("workflows")
 @UseGuards(JwtAuthGuard)
 export class WorkflowsController {
-  constructor(private readonly workflowsService: WorkflowsService) {}
+  constructor(
+    private readonly workflowsService: WorkflowsService,
+    private readonly workflowsSeedService: WorkflowsSeedService
+  ) {}
 
   @Post()
   async create(@Body() createWorkflowDto: any, @Request() req: any) {
@@ -60,5 +64,36 @@ export class WorkflowsController {
   @Post(":id/duplicate")
   async duplicate(@Param("id") id: string, @Request() req: any) {
     return this.workflowsService.duplicate(id, req.user.userId);
+  }
+
+  @Post("seed")
+  async seedWorkflow(@Body("email") email: string) {
+    if (!email) {
+      throw new Error("Email is required");
+    }
+
+    const workflow = await this.workflowsSeedService.seedComprehensiveWorkflow(
+      email
+    );
+
+    return {
+      success: true,
+      message: "Workflow seeded successfully",
+      workflowId: workflow._id,
+      totalNodes: workflow.nodes.length,
+      totalConnections: workflow.connections.length,
+    };
+  }
+
+  // Delete test workflow endpoint
+  @Delete("seed/:email")
+  async deleteTestWorkflow(@Param("email") email: string) {
+    const result = await this.workflowsSeedService.deleteTestWorkflow(email);
+
+    return {
+      success: true,
+      message: "Test workflow deleted",
+      deletedCount: result.deletedCount,
+    };
   }
 }
