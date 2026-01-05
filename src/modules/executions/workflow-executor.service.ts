@@ -20,6 +20,7 @@ interface ExecutionContext {
   nodeOutputs: Record<string, NodeOutput>;
   inputData: any;
   visited: Set<string>;
+  currentNodeId?: string;
 }
 
 @Injectable()
@@ -122,6 +123,7 @@ export class WorkflowExecutor {
     }
 
     context.visited.add(node.id);
+    context.currentNodeId = node.id;
     const start = Date.now();
 
     this.logger.log(`🔵 Executing node: ${node.id} (${node.type})`);
@@ -227,30 +229,102 @@ export class WorkflowExecutor {
     return value.replace(expressionPattern, (match, expression) => {
       const trimmed = expression.trim();
 
-      // Handle $node references
+      // Handle $node references - UPDATED LOGIC
       if (trimmed.startsWith("$node.")) {
         const parts = trimmed.split(".");
         if (parts.length < 3) return match;
 
-        const nodeId = parts[1];
+        const nodeIdentifier = parts[1]; // Could be "code_1" or "node-1767543799718"
         const path = parts.slice(2);
 
-        const nodeOutput = context.nodeOutputs[nodeId];
+        // Try to find node by exact ID first
+        let nodeOutput = context.nodeOutputs[nodeIdentifier];
+
+        // If not found, try to find by node type and index
         if (!nodeOutput) {
-          this.logger.warn(`Node ${nodeId} not found in outputs`);
+          // Extract type and index from identifier like "code_1" or "ai_1"
+          const typeMatch = nodeIdentifier.match(/^([a-zA-Z]+)_?(\d*)$/);
+          if (typeMatch) {
+            const [, nodeType, indexStr] = typeMatch;
+            const index = indexStr ? parseInt(indexStr) - 1 : 0;
+
+            // Find all nodes of this type
+            const nodesOfType = Object.entries(context.nodeOutputs)
+              .filter(([id, output]) => {
+                const node = context.workflow.nodes.find(
+                  (n: any) => n.id === id
+                );
+                return node && node.type === nodeType;
+              })
+              .map(([id]) => id);
+
+            // Get the node at the specified index
+            if (nodesOfType.length > index) {
+              nodeOutput = context.nodeOutputs[nodesOfType[index]];
+              this.logger.log(
+                `Resolved ${nodeIdentifier} to node ${nodesOfType[index]}`
+              );
+            }
+          }
+        }
+
+        if (!nodeOutput) {
+          this.logger.warn(`Node ${nodeIdentifier} not found in outputs`);
           return match;
         }
 
+        // Navigate through the path
         let result = nodeOutput;
         for (const key of path) {
-          if (result && typeof result === "object" && key in result) {
+          // Handle array indices like data[0]
+          const arrayMatch = key.match(/^(\w+)\[(\d+)\]$/);
+          if (arrayMatch) {
+            const [, prop, idx] = arrayMatch;
+            result = result?.[prop]?.[parseInt(idx)];
+          } else if (result && typeof result === "object" && key in result) {
             result = result[key];
           } else {
+            this.logger.warn(`Path ${path.join(".")} not found in node output`);
             return match;
           }
         }
 
-        return result;
+        return result !== undefined ? result : match;
+      }
+
+      // Add support for $prev (previous node)
+      if (trimmed.startsWith("$prev.")) {
+        const path = trimmed.substring(6).split(".");
+
+        // Get the current node's incoming connections
+        const incoming = context.workflow.connections.filter(
+          (c: any) => c.target === context.currentNodeId
+        );
+
+        if (incoming.length > 0) {
+          const prevNodeId = incoming[0].source;
+          const prevOutput = context.nodeOutputs[prevNodeId];
+
+          if (prevOutput) {
+            let result = prevOutput;
+            for (const key of path) {
+              const arrayMatch = key.match(/^(\w+)\[(\d+)\]$/);
+              if (arrayMatch) {
+                const [, prop, idx] = arrayMatch;
+                result = result?.[prop]?.[parseInt(idx)];
+              } else if (
+                result &&
+                typeof result === "object" &&
+                key in result
+              ) {
+                result = result[key];
+              } else {
+                return match;
+              }
+            }
+            return result !== undefined ? result : match;
+          }
+        }
       }
 
       // Handle $input references
@@ -402,7 +476,7 @@ export class WorkflowExecutor {
   }
 
   // ============= AI NODE IMPLEMENTATIONS =============
-  
+
   private async executeAIChat(config: any, input: any): Promise<NodeOutput> {
     const {
       provider,
@@ -416,6 +490,79 @@ export class WorkflowExecutor {
 
     if (!prompt) throw new Error("Prompt is required");
 
+    // ✅ Check if input is an array of items to process
+    const isArrayInput = Array.isArray(input);
+    const items = isArrayInput ? input : [input];
+
+    // ✅ Process each item individually if array
+    if (isArrayInput && items.length > 1) {
+      const results = [];
+
+      for (const item of items) {
+        // Resolve prompt for this specific item
+        const resolvedPrompt = this.resolveItemExpressions(prompt, item);
+        const resolvedSystemPrompt = systemPrompt
+          ? this.resolveItemExpressions(systemPrompt, item)
+          : "You are a helpful assistant.";
+
+        this.logger.log(`🤖 AI Chat processing item: ${JSON.stringify(item)}`);
+
+        // Make AI call for this individual item
+        const aiResult = await this.makeAICall(
+          provider,
+          model,
+          apiKey,
+          resolvedSystemPrompt,
+          resolvedPrompt,
+          temperature,
+          maxTokens
+        );
+
+        results.push({
+          ...item,
+          response: aiResult.response,
+          model: aiResult.model,
+        });
+      }
+
+      return { data: results };
+    }
+
+    // ✅ Single item processing (existing logic)
+    const resolvedPrompt = this.resolveItemExpressions(prompt, items[0]);
+    const resolvedSystemPrompt = systemPrompt
+      ? this.resolveItemExpressions(systemPrompt, items[0])
+      : "You are a helpful assistant.";
+
+    const aiResult = await this.makeAICall(
+      provider,
+      model,
+      apiKey,
+      resolvedSystemPrompt,
+      resolvedPrompt,
+      temperature,
+      maxTokens
+    );
+
+    return {
+      data: {
+        ...items[0],
+        response: aiResult.response,
+        model: aiResult.model,
+      },
+    };
+  }
+
+  // ✅ Extract AI call logic into separate method
+  private async makeAICall(
+    provider: string,
+    model: string,
+    apiKey: string,
+    systemPrompt: string,
+    prompt: string,
+    temperature: number,
+    maxTokens: number
+  ): Promise<{ response: string; model: string; usage?: any }> {
     let response;
 
     try {
@@ -427,10 +574,7 @@ export class WorkflowExecutor {
           {
             model: model || "gpt-4o-mini",
             messages: [
-              {
-                role: "system",
-                content: systemPrompt || "You are a helpful assistant.",
-              },
+              { role: "system", content: systemPrompt },
               { role: "user", content: prompt },
             ],
             temperature: temperature || 0.7,
@@ -445,12 +589,9 @@ export class WorkflowExecutor {
         );
 
         return {
-          data: {
-            response: response.data.choices[0].message.content,
-            model: response.data.model,
-            usage: response.data.usage,
-            ...input,
-          },
+          response: response.data.choices[0].message.content,
+          model: response.data.model,
+          usage: response.data.usage,
         };
       } else if (provider === "anthropic") {
         if (!apiKey) throw new Error("API key is required for Anthropic");
@@ -474,17 +615,12 @@ export class WorkflowExecutor {
         );
 
         return {
-          data: {
-            response: response.data.content[0].text,
-            model: response.data.model,
-            usage: response.data.usage,
-            ...input,
-          },
+          response: response.data.content[0].text,
+          model: response.data.model,
+          usage: response.data.usage,
         };
-      }
-      // ✅ ADD OLLAMA SUPPORT
-      else if (provider === "ollama") {
-        const ollamaUrl = config.ollamaUrl || "http://localhost:11434";
+      } else if (provider === "ollama") {
+        const ollamaUrl = "http://localhost:11434";
 
         response = await axios.post(
           `${ollamaUrl}/api/generate`,
@@ -507,15 +643,10 @@ export class WorkflowExecutor {
         );
 
         return {
-          data: {
-            response: response.data.response,
-            model: model || "llama3.2",
-            ...input,
-          },
+          response: response.data.response,
+          model: model || "llama3.2",
         };
-      }
-      // ✅ ADD GROQ (FREE API)
-      else if (provider === "groq") {
+      } else if (provider === "groq") {
         if (!apiKey) throw new Error("API key is required for Groq");
 
         response = await axios.post(
@@ -523,10 +654,7 @@ export class WorkflowExecutor {
           {
             model: model || "llama-3.3-70b-versatile",
             messages: [
-              {
-                role: "system",
-                content: systemPrompt || "You are a helpful assistant.",
-              },
+              { role: "system", content: systemPrompt },
               { role: "user", content: prompt },
             ],
             temperature: temperature || 0.7,
@@ -541,12 +669,9 @@ export class WorkflowExecutor {
         );
 
         return {
-          data: {
-            response: response.data.choices[0].message.content,
-            model: response.data.model,
-            usage: response.data.usage,
-            ...input,
-          },
+          response: response.data.choices[0].message.content,
+          model: response.data.model,
+          usage: response.data.usage,
         };
       }
 
@@ -1192,8 +1317,40 @@ export class WorkflowExecutor {
       smtpPassword,
     } = config;
 
-    if (!fromEmail || !toEmail || !subject || !body) {
-      throw new Error("Email requires from, to, subject, and body");
+    if (!fromEmail || !subject || !body) {
+      throw new Error("Email requires from, subject, and body");
+    }
+
+    // ✅ Handle both single object and array inputs
+    let items: any[] = [];
+
+    if (Array.isArray(input)) {
+      items = input;
+    } else if (typeof input === "object" && input !== null) {
+      // Check if it's an object with numeric keys (from AI Chat output)
+      const keys = Object.keys(input);
+      const isNumericObject = keys.every((k) => !isNaN(Number(k)));
+
+      if (isNumericObject) {
+        // Convert {0: {...}, 1: {...}} to [{...}, {...}]
+        items = Object.values(input).filter(
+          (v) => typeof v === "object" && v !== null
+        );
+      } else {
+        // Single object
+        items = [input];
+      }
+    } else {
+      items = [input];
+    }
+
+    // Filter out non-user objects (like 'response', 'model', etc.)
+    items = items.filter(
+      (item) => item && typeof item === "object" && (item.email || item.name) // Has user-like properties
+    );
+
+    if (items.length === 0) {
+      throw new Error("No valid items to send emails to");
     }
 
     const transportConfig: any = {
@@ -1210,29 +1367,105 @@ export class WorkflowExecutor {
     }
 
     const transporter = nodemailer.createTransport(transportConfig);
+    const results = [];
 
-    const mailOptions = {
-      from: fromEmail,
-      to: toEmail,
-      subject,
-      [html ? "html" : "text"]: body,
-    };
+    for (const item of items) {
+      // ✅ Resolve expressions for each individual item
+      const resolvedToEmail =
+        this.resolveItemExpressions(toEmail, item) || item.email;
+      const resolvedSubject = this.resolveItemExpressions(subject, item);
+      const resolvedBody = this.resolveItemExpressions(body, item);
 
-    try {
-      const info = await transporter.sendMail(mailOptions);
-      return {
-        data: {
+      // Skip if no recipient
+      if (!resolvedToEmail) {
+        this.logger.warn(
+          `Skipping email - no recipient for item: ${JSON.stringify(item)}`
+        );
+        continue;
+      }
+
+      const mailOptions = {
+        from: fromEmail,
+        to: resolvedToEmail,
+        subject: resolvedSubject,
+        [html ? "html" : "text"]: resolvedBody,
+      };
+
+      try {
+        const info = await transporter.sendMail(mailOptions);
+        results.push({
           sent: true,
           messageId: info.messageId,
           from: fromEmail,
-          to: toEmail,
-          subject,
-          ...input,
-        },
-      };
-    } catch (error) {
-      throw new Error(`Email sending failed: ${error.message}`);
+          to: resolvedToEmail,
+          subject: resolvedSubject,
+          item: item,
+        });
+
+        this.logger.log(`✉️ Email sent to ${resolvedToEmail}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to send email to ${resolvedToEmail}: ${error.message}`
+        );
+        results.push({
+          sent: false,
+          error: error.message,
+          to: resolvedToEmail,
+          item: item,
+        });
+      }
     }
+
+    return {
+      data: {
+        emails: results,
+        totalSent: results.filter((r) => r.sent).length,
+        totalFailed: results.filter((r) => !r.sent).length,
+      },
+    };
+  }
+
+  // ✅ Enhanced helper method with support for $item, $prev, and direct property access
+  private resolveItemExpressions(value: string, item: any): string {
+    if (typeof value !== "string") return value;
+
+    const expressionPattern = /\{\{([^}]+)\}\}/g;
+
+    return value.replace(expressionPattern, (match, expression) => {
+      const trimmed = expression.trim();
+
+      // Handle $item references (current item in loop)
+      if (trimmed.startsWith("$item.")) {
+        const path = trimmed.substring(6).split(".");
+        let result = item;
+
+        for (const key of path) {
+          if (result && typeof result === "object" && key in result) {
+            result = result[key];
+          } else {
+            return match;
+          }
+        }
+
+        return result !== undefined ? result : match;
+      }
+
+      // ✅ Handle $prev references (alias for $item)
+      if (trimmed.startsWith("$prev.")) {
+        const path = trimmed.substring(6);
+
+        // Handle $prev.data.email → access item directly
+        if (path.startsWith("data.")) {
+          const field = path.substring(5); // Remove "data."
+          return item[field] !== undefined ? item[field] : match;
+        }
+
+        // Handle $prev.email → direct field access
+        return item[path] !== undefined ? item[path] : match;
+      }
+
+      return match;
+    });
   }
 
   private async executeSlack(config: any, input: any): Promise<NodeOutput> {
