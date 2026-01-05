@@ -14,17 +14,19 @@ export class ExecutionProcessor {
 
   @Process("execute-workflow")
   async handleWorkflowExecution(job: Job) {
-    const { executionId, workflowId, executionData } = job.data;
+    const { executionId, workflowId, executionData, userId } = job.data;
 
     console.log(
-      `Processing execution ${executionId} for workflow ${workflowId}`
+      `Processing execution ${executionId} for workflow ${workflowId} (user: ${userId})`
     );
 
     try {
+      // Pass userId to the executor
       const result = await this.workflowExecutor.execute(
         workflowId,
         executionId,
-        executionData
+        executionData,
+        userId // Add userId here
       );
 
       await this.executionsService.updateStatus(executionId, "success");

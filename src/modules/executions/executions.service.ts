@@ -59,6 +59,7 @@ export class ExecutionsService {
       executionId: execution._id.toString(),
       workflowId,
       executionData,
+      userId,
     });
 
     return {
@@ -185,7 +186,9 @@ export class ExecutionsService {
       },
     ]);
 
-    const totalExecutions = await this.executionModel.countDocuments({ userId });
+    const totalExecutions = await this.executionModel.countDocuments({
+      userId,
+    });
 
     const recentExecutions = await this.executionModel
       .find({ userId })

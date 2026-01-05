@@ -3,6 +3,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import axios, { AxiosRequestConfig } from "axios";
 import * as nodemailer from "nodemailer";
+import { FilesService } from "../files/files.service";
 import * as fs from "fs/promises";
 import { VM } from "vm2";
 
@@ -23,18 +24,33 @@ interface ExecutionContext {
   currentNodeId?: string;
 }
 
+interface FileContentResult {
+  data: any;
+  type: string;
+  rowCount?: number;
+  columns?: string[];
+}
+
 @Injectable()
 export class WorkflowExecutor {
   private readonly logger = new Logger(WorkflowExecutor.name);
-
+  private currentUserId: string; // Add this property
   constructor(
     @InjectModel(Workflow.name)
     private readonly workflowModel: Model<WorkflowDocument>,
     @InjectModel(Execution.name)
-    private readonly executionModel: Model<ExecutionDocument>
+    private readonly executionModel: Model<ExecutionDocument>,
+    private readonly filesService: FilesService
   ) {}
 
-  async execute(workflowId: string, executionId: string, inputData: any = {}) {
+  async execute(
+    workflowId: string,
+    executionId: string,
+    inputData: any = {},
+    userId?: string // Add userId parameter
+  ) {
+    this.currentUserId = userId; // Set it here
+
     const workflow = await this.workflowModel.findById(workflowId);
     if (!workflow) throw new Error("Workflow not found");
 
@@ -205,6 +221,142 @@ export class WorkflowExecutor {
     }
 
     return output;
+  }
+
+  private async executeUploadFile(
+    config: any,
+    input: any
+  ): Promise<NodeOutput> {
+    const { fileId } = config;
+
+    if (!fileId) {
+      throw new Error("File ID is required");
+    }
+
+    if (!this.currentUserId) {
+      throw new Error("User ID is required to access uploaded files");
+    }
+
+    try {
+      // Get raw file buffer from FilesService
+      const fileBuffer = await this.filesService.getFileContent(
+        fileId,
+        this.currentUserId
+      );
+
+      // Parse the file based on its type
+      const fileContentResult = await this.parseFileContent(fileBuffer, fileId);
+
+      this.logger.log(`📤 Uploaded file processed: ${fileContentResult.type}`);
+
+      return {
+        data: fileContentResult.data,
+        metadata: {
+          type: fileContentResult.type,
+          rowCount: fileContentResult.rowCount,
+          columns: fileContentResult.columns,
+          fileId: fileId,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Failed to process uploaded file: ${error.message}`);
+      throw new Error(`Failed to process file ${fileId}: ${error.message}`);
+    }
+  }
+
+  private async parseFileContent(
+    buffer: Buffer,
+    fileId: string
+  ): Promise<FileContentResult> {
+    // Get file metadata to determine type
+    const file = await this.filesService.getFileById(fileId, this.currentUserId);
+
+    if (!file) {
+      throw new Error("File not found");
+    }
+
+    const fileType = file.mimetype;
+    const fileName = file.filename;
+
+    // Parse based on file type
+    if (fileType === "text/csv" || fileName.endsWith(".csv")) {
+      return this.parseCSV(buffer);
+    } else if (
+      fileType ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      fileType === "application/vnd.ms-excel" ||
+      fileName.endsWith(".xlsx") ||
+      fileName.endsWith(".xls")
+    ) {
+      return this.parseExcel(buffer);
+    } else if (fileType === "application/json" || fileName.endsWith(".json")) {
+      return this.parseJSON(buffer);
+    } else if (fileType?.startsWith("text/") || fileName.endsWith(".txt")) {
+      return {
+        data: buffer.toString("utf-8"),
+        type: "text",
+      };
+    } else {
+      // Return raw buffer for other file types
+      return {
+        data: buffer,
+        type: "binary",
+      };
+    }
+  }
+
+  // CSV parser helper
+  private parseCSV(buffer: Buffer): FileContentResult {
+    const Papa = require("papaparse");
+    const csvText = buffer.toString("utf-8");
+
+    const result = Papa.parse(csvText, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: true,
+    });
+
+    return {
+      data: result.data,
+      type: "csv",
+      rowCount: result.data.length,
+      columns: result.meta.fields || [],
+    };
+  }
+
+  // Excel parser helper
+  private parseExcel(buffer: Buffer): FileContentResult {
+    const XLSX = require("xlsx");
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    const columns = data.length > 0 ? Object.keys(data[0]) : [];
+
+    return {
+      data: data,
+      type: "excel",
+      rowCount: data.length,
+      columns: columns,
+    };
+  }
+
+  // JSON parser helper
+  private parseJSON(buffer: Buffer): FileContentResult {
+    const jsonText = buffer.toString("utf-8");
+    const data = JSON.parse(jsonText);
+
+    return {
+      data: data,
+      type: "json",
+      rowCount: Array.isArray(data) ? data.length : undefined,
+      columns:
+        Array.isArray(data) && data.length > 0
+          ? Object.keys(data[0])
+          : undefined,
+    };
   }
 
   private getConnectedNodesByOutput(
@@ -407,7 +559,8 @@ export class WorkflowExecutor {
         return this.executeDataMapper(config, nodeInput);
       case "aggregate":
         return this.executeAggregate(config, nodeInput);
-
+      case "uploadFile":
+        return await this.executeUploadFile(config, nodeInput);
       // ============= TRANSFORM NODES =============
       case "code":
         return await this.executeCode(config, nodeInput);
@@ -1523,15 +1676,49 @@ export class WorkflowExecutor {
   // ============= FILE NODES =============
 
   private async executeReadFile(config: any, input: any): Promise<NodeOutput> {
-    const { operation = "read", filePath, encoding = "utf-8" } = config;
+    const {
+      operation = "read",
+      filePath,
+      encoding = "utf-8",
+      content,
+    } = config;
 
     if (!filePath) throw new Error("File path is required");
 
+    // Check if filePath is a file ID (from upload node)
+    if (filePath.match(/^[0-9a-fA-F]{24}$/)) {
+      if (!this.currentUserId) {
+        throw new Error("User ID is required to access uploaded files");
+      }
+
+      // It's a MongoDB ObjectId (uploaded file)
+      const fileBuffer = await this.filesService.getFileContent(
+        filePath,
+        this.currentUserId
+      );
+
+      const fileContentResult = await this.parseFileContent(
+        fileBuffer,
+        filePath
+      );
+
+      return {
+        data: fileContentResult.data,
+        metadata: {
+          type: fileContentResult.type,
+          source: "uploaded",
+          rowCount: fileContentResult.rowCount,
+          columns: fileContentResult.columns,
+        },
+      };
+    }
+
+    // Otherwise, treat as file system path
     if (operation === "read") {
-      const content = await fs.readFile(filePath, encoding);
+      const fileContent = await fs.readFile(filePath, encoding);
       return {
         data: {
-          content,
+          content: fileContent,
           filePath,
           encoding,
           ...input,
@@ -1540,7 +1727,7 @@ export class WorkflowExecutor {
     }
 
     if (operation === "write") {
-      const contentToWrite = input.content || JSON.stringify(input);
+      const contentToWrite = content || input.content || JSON.stringify(input);
       await fs.writeFile(filePath, contentToWrite, encoding);
       return {
         data: {
@@ -1552,7 +1739,7 @@ export class WorkflowExecutor {
     }
 
     if (operation === "append") {
-      const contentToAppend = input.content || JSON.stringify(input);
+      const contentToAppend = content || input.content || JSON.stringify(input);
       await fs.appendFile(filePath, contentToAppend, encoding);
       return {
         data: {

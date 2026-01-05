@@ -7,6 +7,7 @@ import { WorkflowsModule } from './modules/workflows/workflows.module';
 import { NodesModule } from './modules/nodes/nodes.module';
 import { ExecutionsModule } from './modules/executions/executions.module';
 import { CredentialsModule } from './modules/credentials/credentials.module';
+import { FilesModule } from './modules/files/files.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { CredentialsModule } from './modules/credentials/credentials.module';
     NodesModule,
     ExecutionsModule,
     CredentialsModule,
+    FilesModule,
   ],
 })
 export class AppModule {}

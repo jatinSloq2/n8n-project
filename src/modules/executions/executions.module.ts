@@ -10,6 +10,7 @@ import { ExecutionsController } from "./executions.controller";
 import { ExecutionsService } from "./executions.service";
 import { WorkflowExecutor } from "./workflow-executor.service";
 import { WorkflowScheduler } from "./workflow-scheduler.service";
+import { FilesModule } from "../files/files.module";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { WorkflowScheduler } from "./workflow-scheduler.service";
     }),
     ScheduleModule.forRoot(),
     WorkflowsModule,
+    FilesModule,
   ],
   controllers: [ExecutionsController],
   providers: [
