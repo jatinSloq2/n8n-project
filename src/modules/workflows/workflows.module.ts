@@ -1,7 +1,8 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { Workflow, WorkflowSchema } from "./workflow.schema";
-import { UsersModule } from "../users/users.module"; // ADD THIS
+import { UsersModule } from "../users/users.module";
+import { SchedulerModule } from "../scheduler/scheduler.module"; // ADD THIS
 import { WorkflowsController } from "./workflows.controller";
 import { WorkflowsService } from "./workflows.service";
 import { WorkflowsSeedService } from "./workflows-seed.service";
@@ -11,7 +12,8 @@ import { WorkflowsSeedService } from "./workflows-seed.service";
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },
     ]),
-    UsersModule, // ADD THIS LINE
+    UsersModule,
+    forwardRef(() => SchedulerModule), // ADD THIS LINE with forwardRef
   ],
   controllers: [WorkflowsController],
   providers: [WorkflowsService, WorkflowsSeedService],

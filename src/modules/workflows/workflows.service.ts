@@ -1,13 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Workflow, WorkflowDocument } from './workflow.schema';
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model, Types } from "mongoose";
+import { Workflow, WorkflowDocument } from "./workflow.schema";
+import { SchedulerService } from "../scheduler/scheduler.service";
 
 @Injectable()
 export class WorkflowsService {
   constructor(
     @InjectModel(Workflow.name)
     private readonly workflowModel: Model<WorkflowDocument>,
+    private schedulerService: SchedulerService
   ) {}
 
   async create(createWorkflowDto: any, userId: string) {
@@ -23,23 +25,73 @@ export class WorkflowsService {
   }
 
   async findById(id: string, userId: string) {
-    const workflow = await this.workflowModel.findOne({ _id: id, userId }).exec();
-    if (!workflow) throw new NotFoundException('Workflow not found');
+    const workflow = await this.workflowModel
+      .findOne({ _id: id, userId })
+      .exec();
+    if (!workflow) throw new NotFoundException("Workflow not found");
     return workflow;
   }
 
-  async update(id: string, updateWorkflowDto: any, userId: string) {
-    const workflow = await this.workflowModel
-      .findOneAndUpdate({ _id: id, userId }, updateWorkflowDto, { new: true })
-      .exec();
-    if (!workflow) throw new NotFoundException('Workflow not found');
+  async update(
+    id: string,
+    updateWorkflowDto: any,
+    userId: string
+  ): Promise<Workflow> {
+    const workflow = await this.workflowModel.findOneAndUpdate(
+      { _id: id, user: userId },
+      updateWorkflowDto,
+      { new: true }
+    );
+
+    if (!workflow) {
+      throw new NotFoundException("Workflow not found");
+    }
+
+    // Handle schedule updates
+    const scheduleNode = workflow.nodes.find(
+      (node) => node.type === "schedule"
+    );
+
+    if (scheduleNode) {
+      if (scheduleNode.data.config?.enabled) {
+        // Schedule or reschedule
+        await this.schedulerService.scheduleWorkflow(
+          id,
+          scheduleNode.data.config,
+          userId
+        );
+      } else {
+        // Unschedule if disabled
+        this.schedulerService.unscheduleWorkflow(id);
+      }
+    } else {
+      // No schedule node, unschedule if it was scheduled
+      this.schedulerService.unscheduleWorkflow(id);
+    }
+
     return workflow;
+  }
+
+  async remove(id: string, userId: string): Promise<void> {
+    const workflow = await this.workflowModel.findOneAndDelete({
+      _id: id,
+      user: userId,
+    });
+
+    if (!workflow) {
+      throw new NotFoundException("Workflow not found");
+    }
+
+    // Unschedule if it was scheduled
+    this.schedulerService.unscheduleWorkflow(id);
   }
 
   async delete(id: string, userId: string) {
-    const workflow = await this.workflowModel.findOneAndDelete({ _id: id, userId }).exec();
-    if (!workflow) throw new NotFoundException('Workflow not found');
-    return { message: 'Workflow deleted successfully' };
+    const workflow = await this.workflowModel
+      .findOneAndDelete({ _id: id, userId })
+      .exec();
+    if (!workflow) throw new NotFoundException("Workflow not found");
+    return { message: "Workflow deleted successfully" };
   }
 
   async activate(id: string, userId: string) {
@@ -60,5 +112,18 @@ export class WorkflowsService {
       name: `${workflow.name} (Copy)`,
     });
     return duplicateWorkflow.save();
+  }
+
+  async findByWebhookPath(path: string): Promise<WorkflowDocument | null> {
+    return this.workflowModel
+      .findOne({
+        "nodes.type": "webhook",
+        "nodes.data.config.path": path,
+      })
+      .exec();
+  }
+
+  async findByIdWebhook(id: string): Promise<WorkflowDocument> {
+    return this.workflowModel.findById(id).exec();
   }
 }
