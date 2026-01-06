@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { forwardRef, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Workflow, WorkflowDocument } from "./workflow.schema";
@@ -9,6 +9,7 @@ export class WorkflowsService {
   constructor(
     @InjectModel(Workflow.name)
     private readonly workflowModel: Model<WorkflowDocument>,
+    @Inject(forwardRef(() => SchedulerService)) // ADD forwardRef wrapper
     private schedulerService: SchedulerService
   ) {}
 
