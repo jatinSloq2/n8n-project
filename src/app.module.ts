@@ -8,6 +8,7 @@ import { NodesModule } from './modules/nodes/nodes.module';
 import { ExecutionsModule } from './modules/executions/executions.module';
 import { CredentialsModule } from './modules/credentials/credentials.module';
 import { FilesModule } from './modules/files/files.module';
+import { TemplatesModule } from './modules/templates/templates.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { FilesModule } from './modules/files/files.module';
     ExecutionsModule,
     CredentialsModule,
     FilesModule,
+    TemplatesModule,
   ],
 })
 export class AppModule {}
