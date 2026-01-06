@@ -23,6 +23,9 @@ export class File {
   @Prop({ required: true })
   path: string;
 
+  @Prop({ required: true })
+  url: string; // Add this field
+
   @Prop({ default: Date.now })
   uploadedAt: Date;
 }

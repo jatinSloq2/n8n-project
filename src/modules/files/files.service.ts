@@ -32,6 +32,7 @@ export class FilesService {
         originalName: file.originalname,
         mimetype: file.mimetype,
         size: file.size,
+        url: `/uploads/${file.filename}`, // Add this line
         path: file.path,
         uploadedAt: new Date(),
       });
@@ -46,10 +47,7 @@ export class FilesService {
    * Get all files uploaded by a specific user
    */
   async getUserFiles(userId: string): Promise<File[]> {
-    return this.fileModel
-      .find({ userId })
-      .sort({ createdAt: -1 })
-      .lean();
+    return this.fileModel.find({ userId }).sort({ createdAt: -1 }).lean();
   }
 
   /**
