@@ -1,7 +1,9 @@
-import { Controller, Get, Post, Body, Param, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Request, UseGuards } from "@nestjs/common";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { TemplatesService } from "./template.service";
 
 @Controller("templates")
+@UseGuards(JwtAuthGuard) // ✅ ADD THIS - Protect all template routes
 export class TemplatesController {
   constructor(private readonly templatesService: TemplatesService) {}
 
@@ -29,7 +31,16 @@ export class TemplatesController {
   }
 
   @Post(":id/use")
-  useTemplate(@Param("id") id: string, @Body() customData: any) {
-    return this.templatesService.createWorkflowFromTemplate(id, customData);
+  useTemplate(
+    @Param("id") id: string, 
+    @Body() customData: any,
+    @Request() req: any // ✅ ADD THIS - Get user from JWT
+  ) {
+    // ✅ Pass the userId from JWT token
+    return this.templatesService.createWorkflowFromTemplate(id, {
+      ...customData,
+      user: req.user,
+      userId: req.user.userId || req.user.id // ✅ THIS IS THE KEY FIX
+    });
   }
 }

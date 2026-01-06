@@ -39,7 +39,7 @@ export class WorkflowsService {
     userId: string
   ): Promise<Workflow> {
     const workflow = await this.workflowModel.findOneAndUpdate(
-      { _id: id, user: userId },
+      { _id: id, userId: userId },
       updateWorkflowDto,
       { new: true }
     );
@@ -76,7 +76,7 @@ export class WorkflowsService {
   async remove(id: string, userId: string): Promise<void> {
     const workflow = await this.workflowModel.findOneAndDelete({
       _id: id,
-      user: userId,
+      userId: userId,
     });
 
     if (!workflow) {

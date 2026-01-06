@@ -787,7 +787,7 @@ export class TemplatesService {
     const template = this.getTemplateById(templateId);
 
     // ✅ IMPORTANT: Extract userId from customData
-    const userId = customData.userId || customData.user?._id;
+    const userId = customData.userId || customData.user?.id;
 
     if (!userId) {
       throw new Error("User ID is required to create workflow");
