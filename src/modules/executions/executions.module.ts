@@ -11,6 +11,8 @@ import { ExecutionsService } from "./executions.service";
 import { WorkflowExecutor } from "./workflow-executor.service";
 import { WorkflowScheduler } from "./workflow-scheduler.service";
 import { FilesModule } from "../files/files.module";
+import { SampleResponseController } from "./sample-response.controller";
+import { SampleResponseService } from "./sample-response.service";
 
 @Module({
   imports: [
@@ -24,18 +26,20 @@ import { FilesModule } from "../files/files.module";
     WorkflowsModule,
     FilesModule,
   ],
-  controllers: [ExecutionsController],
+  controllers: [ExecutionsController, SampleResponseController],
   providers: [
     ExecutionsService,
     WorkflowExecutor,
     ExecutionProcessor,
     WorkflowScheduler,
+    SampleResponseService,
   ],
   exports: [
     MongooseModule,
     ExecutionsService,
     WorkflowExecutor,
     WorkflowScheduler,
+    SampleResponseService,
   ],
 })
 export class ExecutionsModule {}
